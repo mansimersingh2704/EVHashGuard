@@ -1,0 +1,169 @@
+[
+  {
+    "note": "Standard OCPP 1.6 BootNotification Call message",
+    "ocpp_message": [2, "uuid-001", "BootNotification", {
+      "chargePointModel": "FastCharger-X1",
+      "chargePointVendor": "EV-Tech Inc",
+      "firmwareVersion": "2.1.0",
+      "chargePointSerialNumber": "EVT-2024-001",
+      "iccid": "",
+      "imsi": ""
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "a3f5c91b2e4d7f8a0b6c3e1d9f2a7b4c",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 BootNotification CallResult (accepted)",
+    "ocpp_message": [3, "uuid-001", {
+      "currentTime": "2024-01-15T10:30:01Z",
+      "heartbeatInterval": 300,
+      "status": "Accepted"
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "b7e2a44f1c3d6e8f0a9b5c2d8e1f7a3b",
+      "timestamp": "2024-01-15T10:30:01Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 Heartbeat Call message",
+    "ocpp_message": [2, "uuid-002", "Heartbeat", {}],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "c9d3e55a2b4f7e1c0d8a6b3e9f4c2d5e",
+      "timestamp": "2024-01-15T10:35:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 StatusNotification Call message",
+    "ocpp_message": [2, "uuid-003", "StatusNotification", {
+      "connectorId": 1,
+      "errorCode": "NoError",
+      "status": "Available",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "info": "",
+      "vendorId": "",
+      "vendorErrorCode": ""
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "d1e4f66b3c5a8f2d1e9c7b4f0a3e6b1c",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 Authorize Call message",
+    "ocpp_message": [2, "uuid-004", "Authorize", {
+      "idTag": "RFID-ABC-123456"
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "e2f5a77c4d6b9f3e2f0d8c5a1b4f7c2d",
+      "timestamp": "2024-01-15T10:40:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 StartTransaction Call message",
+    "ocpp_message": [2, "uuid-005", "StartTransaction", {
+      "connectorId": 1,
+      "idTag": "RFID-ABC-123456",
+      "meterStart": 0,
+      "timestamp": "2024-01-15T10:41:00Z",
+      "reservationId": null
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "f3a6b88d5e7c0a4f3a1e9d6b2c5a8d3e",
+      "timestamp": "2024-01-15T10:41:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 MeterValues Call message",
+    "ocpp_message": [2, "uuid-006", "MeterValues", {
+      "connectorId": 1,
+      "transactionId": 42,
+      "meterValue": [
+        {
+          "timestamp": "2024-01-15T10:46:00Z",
+          "sampledValue": [
+            {
+              "value": "15.3",
+              "context": "Sample.Periodic",
+              "format": "Raw",
+              "measurand": "Energy.Active.Import.Register",
+              "phase": null,
+              "location": "Outlet",
+              "unit": "kWh"
+            }
+          ]
+        }
+      ]
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "04b7c99e6f8d1b5a4b2f0e7c3d6b9e4f",
+      "timestamp": "2024-01-15T10:46:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 StopTransaction Call message",
+    "ocpp_message": [2, "uuid-007", "StopTransaction", {
+      "idTag": "RFID-ABC-123456",
+      "meterStop": 15300,
+      "timestamp": "2024-01-15T11:11:00Z",
+      "transactionId": 42,
+      "reason": "Local",
+      "transactionData": []
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "15c8daa f7a9e2c6b5c3f1a8d4e7b0f5c2a9d6e",
+      "timestamp": "2024-01-15T11:11:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 FirmwareStatusNotification Call message",
+    "ocpp_message": [2, "uuid-008", "FirmwareStatusNotification", {
+      "status": "Downloaded"
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "26d9ebb08bafe3d7c6d4a2b9e5f8c1a7",
+      "timestamp": "2024-01-15T11:20:00Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  },
+  {
+    "note": "Standard OCPP 1.6 CallError message (example: GenericError)",
+    "ocpp_message": [4, "uuid-004", "GenericError", "IdTag not found in local list", {
+      "details": "Authorization backend unreachable"
+    }],
+    "vendor_extension_note": "The following is a HYPOTHETICAL vendor-specific legacy extension. NOT part of standard OCPP 1.6.",
+    "vendor_legacy_integrity": {
+      "algorithm": "MD5",
+      "digest": "37eafcc19cbff4e8d7e5b3caf6a9d2b8",
+      "timestamp": "2024-01-15T10:40:01Z",
+      "vendor_id": "EVTech-Legacy-v1"
+    }
+  }
+]
