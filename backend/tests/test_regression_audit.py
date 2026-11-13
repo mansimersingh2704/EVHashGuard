@@ -98,14 +98,28 @@ class TestCriticalSecurityRegressionAudit:
         msg = generate_simulated_ev_message("CS-PORT-005", "StatusNotification")
         wrapped = CryptoWrapper.wrap(msg, mode="sha3_256")
 
-        # Tampering with wrapper_version invalidates the authenticated envelope digest
-        tampered = copy.deepcopy(wrapped)
-        tampered["crypto_metadata"]["wrapper_version"] = "1.0.0-insecure"
-        res = CryptoWrapper.verify(tampered)
+        # 5a. Tampering to an unsupported version rejects with UNSUPPORTED_WRAPPER_VERSION
+        tampered_unsupported = copy.deepcopy(wrapped)
+        tampered_unsupported["crypto_metadata"]["wrapper_version"] = "1.0.0-insecure"
+        res_unsupported = CryptoWrapper.verify(tampered_unsupported)
+        assert res_unsupported["verified"] is False
+        assert res_unsupported["crypto_verified"] is False
+        assert res_unsupported["error"] == "UNSUPPORTED_WRAPPER_VERSION"
 
-        assert res["verified"] is False
-        assert res["crypto_verified"] is False
-        assert res["error"] == "INTEGRITY_VERIFICATION_FAILED"
+        # 5b. Tampering to a supported version invalidates authenticated envelope digest (INTEGRITY_VERIFICATION_FAILED)
+        tampered_supported = copy.deepcopy(wrapped)
+        tampered_supported["crypto_metadata"]["wrapper_version"] = "2.0.0-sha3"
+        res_supported = CryptoWrapper.verify(tampered_supported)
+        assert res_supported["verified"] is False
+        assert res_supported["crypto_verified"] is False
+        assert res_supported["error"] == "INTEGRITY_VERIFICATION_FAILED"
+
+        # 5c. Missing wrapper_version rejects with MISSING_WRAPPER_VERSION
+        tampered_missing = copy.deepcopy(wrapped)
+        del tampered_missing["crypto_metadata"]["wrapper_version"]
+        res_missing = CryptoWrapper.verify(tampered_missing)
+        assert res_missing["verified"] is False
+        assert res_missing["error"] == "MISSING_WRAPPER_VERSION"
 
     # ─── 6. Algorithm Field Substitution ──────────────────────────────────────
     def test_06_algorithm_field_substitution(self):
@@ -346,3 +360,59 @@ class TestCriticalSecurityRegressionAudit:
         assert res["verified"] is False
         assert res["error"] == "UNKNOWN_KEY_ID"
         assert res["dispatched_to_legacy_parser"] is False
+
+    # ─── 21. Malformed Key Registry Fail-Fast ─────────────────────────────────
+    def test_21_malformed_key_registry_prevents_silent_fallback(self, monkeypatch):
+        from app.core.config import _load_key_registry
+
+        # A malformed JSON in EV_KEY_REGISTRY_JSON must raise RuntimeError and NEVER silently fall back
+        monkeypatch.setenv("EV_KEY_REGISTRY_JSON", "{invalid_json_format")
+        with pytest.raises(RuntimeError, match="FATAL CONFIGURATION ERROR"):
+            _load_key_registry()
+
+        # A key shorter than 256 bits (64 hex) must raise RuntimeError
+        monkeypatch.setenv("EV_KEY_REGISTRY_JSON", '{"short-key": "abcd1234"}')
+        with pytest.raises(RuntimeError, match="FATAL CONFIGURATION ERROR"):
+            _load_key_registry()
+
+        # A malformed individual key EV_KEY_TEST must raise RuntimeError
+        monkeypatch.delenv("EV_KEY_REGISTRY_JSON", raising=False)
+        monkeypatch.setenv("EV_KEY_BAD_KEY", "not-a-valid-64-char-hex")
+        with pytest.raises(RuntimeError, match="FATAL CONFIGURATION ERROR"):
+            _load_key_registry()
+
+    # ─── 22. Unkeyed Digest Recomputation Fails Authenticity ───────────────────
+    def test_22_unkeyed_digest_recomputation_fails_authenticity(self):
+        """
+        Proves that an unkeyed hash check (SHA3-256) CANNOT prevent active tampering
+        when the attacker recomputes the digest. Sender authenticity requires HMAC.
+        """
+        import hashlib
+        msg = generate_simulated_ev_message("CS-NORDIC-001", "StopTransaction")
+        wrapped = CryptoWrapper.wrap(msg, mode="sha3_256")
+
+        # Attacker modifies meterStop
+        tampered = copy.deepcopy(wrapped)
+        tampered["payload"]["ocpp_message"][3]["meterStop"] = 99999
+
+        # Attacker recomputes SHA3-256 hash without secret key
+        meta = tampered["crypto_metadata"]
+        auth_context = {
+            "algorithm": meta["algorithm"],
+            "mode": meta["mode"],
+            "nonce": meta["nonce"],
+            "payload": tampered["payload"],
+            "timestamp": meta["timestamp"],
+            "wrapper_version": meta["wrapper_version"],
+        }
+        tampered["crypto_metadata"]["digest"] = hashlib.sha3_256(CryptoWrapper.canonicalize(auth_context)).hexdigest()
+
+        # Unkeyed verification SUCCEEDS (vulnerability of unkeyed hashing against active MITM)
+        res_unkeyed = CryptoWrapper.verify(tampered, enforce_mode="sha3_256")
+        assert res_unkeyed["crypto_verified"] is True
+        assert res_unkeyed["verified"] is True
+
+        # When channel enforces HMAC-SHA3-256, downgrade is blocked and unkeyed forgery fails
+        res_hmac = CryptoWrapper.verify(tampered, enforce_mode="hmac_sha3_256", allow_downgrade=False)
+        assert res_hmac["verified"] is False
+        assert res_hmac["error"] == "DOWNGRADE_ATTACK_PREVENTED"

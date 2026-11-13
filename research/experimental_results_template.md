@@ -2,31 +2,36 @@
 
 ## 1. Experimental Methodology
 
-The empirical performance evaluation of EVHashGuard was executed across 100 repeated trials ($N=100$) using realistic OCPP 1.6-J `MeterValues` and `StopTransaction` message frames generated from simulated hardware profiles.
+The empirical performance evaluation of EVHashGuard was executed across 1,000 repeated trials ($N=1,000$) using realistic OCPP 1.6-J `StopTransaction` message frames generated from simulated hardware profiles.
 
-All measurements were taken using Python's high-resolution `time.perf_counter()` timer. No values were fabricated or estimated.
+All measurements were taken using Python's high-resolution `time.perf_counter_ns()` timer via the committed benchmark script `backend/scripts/run_benchmarks.py`. Raw benchmark data is preserved in `research/benchmark_results.json`.
 
 ---
 
-## 2. Experimental Latency Benchmarks ($N=100$ Trials)
+## 2. Experimental Latency Benchmarks ($N=1,000$ Trials)
 
-| Benchmark Metric | Sample Count ($N$) | Mean Latency (ms) | Median Latency (ms) | Std. Deviation (ms) | Security Level |
-|---|---|---|---|---|---|
-| **MD5 Computation** | 100 | 0.0058 | 0.0042 | 0.0067 | 0 bits (Broken) |
-| **SHA-256 Computation** | 100 | 0.0064 | 0.0026 | 0.0299 | 128-bit collision / 256-bit preimage |
-| **SHA3-256 Computation** | 100 | 0.0115 | 0.0056 | 0.0536 | 128-bit collision / 256-bit preimage |
-| **EVHashGuard Wrap (HMAC-SHA3-256)** | 100 | 0.0561 | 0.0347 | 0.0939 | Full Authenticated Integrity |
-| **EVHashGuard Verify + Parser Forward** | 100 | 0.0648 | 0.0424 | 0.1056 | End-to-End Verification |
+| Benchmark Metric | Sample Count ($N$) | Mean Latency ($\mu$s) | Median ($\mu$s) | Std. Deviation ($\mu$s) | P95 ($\mu$s) | Mean Latency (ms) | Security Designation |
+|---|---|---|---|---|---|---|---|
+| **MD5 Computation (Raw)** | 1,000 | 1.733 | 1.700 | 0.516 | 1.800 | 0.00173 | 0 bits (Broken Collision Resistance) |
+| **SHA-1 Computation (Raw)** | 1,000 | 1.309 | 1.300 | 0.417 | 1.400 | 0.00131 | Deprecated (Broken Collision Resistance) |
+| **SHA-256 Computation (Raw)** | 1,000 | 1.342 | 1.300 | 0.436 | 1.400 | 0.00134 | 128-bit collision / 256-bit preimage |
+| **SHA3-256 Computation (Raw)** | 1,000 | 2.581 | 2.500 | 0.689 | 3.100 | 0.00258 | 128-bit collision / 256-bit preimage |
+| **HMAC-SHA3-256 (Raw MAC)** | 1,000 | 6.294 | 6.200 | 0.672 | 6.400 | 0.00629 | Authenticated Origin & 256-bit Tag |
+| **RFC 8785 Canonicalization** | 1,000 | 48.641 | 47.600 | 5.380 | 54.500 | 0.04864 | Deterministic JCS Byte Serialization |
+| **CryptoWrapper.wrap (HMAC-SHA3)** | 1,000 | 95.011 | 88.100 | 20.016 | 134.400 | 0.09501 | Full Envelope Wrapping & MAC Binding |
+| **CryptoWrapper.verify (In-Memory)** | 1,000 | 114.192 | 104.150 | 25.925 | 159.300 | 0.11419 | In-Memory Verification + Frame Parsing |
+| **CryptoWrapper.verify_async (SQLite)**| 500 | 4,318.285 | 4,133.900 | 1,079.816 | 6,178.700 | 4.31828 | Persistent ACID Replay Nonce Check |
 
 ---
 
 ## 3. Computational Overhead Analysis
 
 1. **Digest Latency Comparison:**
-   - SHA3-256 requires slightly more computational cycles than MD5 due to the 24-round Keccak-$f[1600]$ permutation; however, at approximately **0.0115 ms**, this overhead is negligible for embedded EVSE controllers running at 100–400 MHz.
+   - Raw SHA3-256 requires slightly more computational cycles than MD5 due to the 24-round Keccak-$f[1600]$ sponge permutation; however, at approximately **2.58 $\mu$s** (0.00258 ms), this overhead is negligible for embedded EVSE controllers running at 100–400 MHz.
 2. **Wrapper Processing Overhead:**
-   - The total roundtrip wrapper overhead (Canonicalization + HMAC-SHA3-256 computation + constant-time tag verification + OCPP array structure parsing) is **~0.12 ms**.
-   - Compared against typical 4G/LTE or broadband roundtrip network latency (20 ms – 100 ms) in EVSE-to-CSMS communication, EVHashGuard introduces **less than 0.2% latency overhead**.
+   - In-memory cryptographic verification and structural frame validation completes in **~0.114 ms**.
+   - With persistent SQLite nonce deduplication and ACID database journaling, end-to-end verification completes in **~4.32 ms**.
+   - Compared against typical 4G/LTE cellular network roundtrip latency (20 ms – 100 ms) in field EVSE-to-CSMS communication, EVHashGuard introduces minimal overhead while providing robust cryptographic guarantees.
 
 ---
 

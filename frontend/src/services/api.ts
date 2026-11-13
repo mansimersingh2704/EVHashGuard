@@ -96,6 +96,11 @@ export const api = {
     return res.data;
   },
 
+  simulateUnkeyedRecomputation: async (message?: any) => {
+    const res = await client.post('/api/attacks/unkeyed-recomputation', message || null);
+    return res.data;
+  },
+
   // Risk
   getRiskAnalysis: async () => {
     const res = await client.get('/api/risk/analysis');

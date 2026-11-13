@@ -377,3 +377,81 @@ class AttackSimulator:
                 "dispatched": verify_result.get("dispatched_to_legacy_parser"),
             },
         }
+
+    @classmethod
+    def simulate_unkeyed_digest_recomputation(
+        cls,
+        base_message: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Attack 8 (Critical Pedagogical Proof): Unkeyed SHA3-256 Digest Recomputation.
+        Demonstrates that an in-flight MITM adversary can tamper with an unkeyed SHA3-256 message
+        AND recompute a matching SHA3-256 hash without needing any secret key.
+        - Under unkeyed SHA3-256: The attack EVADES detection (unkeyed check passes).
+        - Under authenticated HMAC-SHA3-256: The attack is BLOCKED.
+        """
+        import hashlib
+        msg = base_message or generate_simulated_ev_message("CS-NORDIC-001", "StopTransaction")
+        wrapped_sha3 = CryptoWrapper.wrap(msg, mode="sha3_256")
+
+        tampered_sha3 = copy.deepcopy(wrapped_sha3)
+        if isinstance(tampered_sha3.get("payload"), dict) and "ocpp_message" in tampered_sha3["payload"]:
+            if len(tampered_sha3["payload"]["ocpp_message"]) > 3:
+                tampered_sha3["payload"]["ocpp_message"][3]["meterStop"] = 1000
+        else:
+            tampered_sha3["payload"]["meterStop"] = 1000
+
+        meta = tampered_sha3["crypto_metadata"]
+        auth_context = {
+            "algorithm": meta["algorithm"],
+            "mode": meta["mode"],
+            "nonce": meta["nonce"],
+            "payload": tampered_sha3["payload"],
+            "timestamp": meta["timestamp"],
+            "wrapper_version": meta["wrapper_version"],
+        }
+        recomputed_digest = hashlib.sha3_256(CryptoWrapper.canonicalize(auth_context)).hexdigest()
+        tampered_sha3["crypto_metadata"]["digest"] = recomputed_digest
+
+        res_unkeyed = CryptoWrapper.verify(tampered_sha3, enforce_mode="sha3_256")
+        unkeyed_evaded = (res_unkeyed["crypto_verified"] is True)
+
+        res_hmac = CryptoWrapper.verify(tampered_sha3, enforce_mode="hmac_sha3_256", allow_downgrade=False)
+
+        return {
+            "attack_type": "UNKEYED_DIGEST_RECOMPUTATION",
+            "attack_name": "MITM Unkeyed Digest Recomputation vs. HMAC Authentication",
+            "attack_attempted": True,
+            "attack_detected": not unkeyed_evaded,
+            "detected": not unkeyed_evaded,
+            "defense_successful": False,
+            "description": (
+                "An in-flight adversary intercepts an unkeyed SHA3-256 message, alters meterStop to defraud charging billing, "
+                "and recomputes a valid SHA3-256 digest. Because unkeyed hashing requires no secret key, "
+                "the CSMS accepts the forged message as valid. In contrast, on an HMAC-SHA3-256 channel, "
+                "the adversary cannot forge the authentication tag without the secret key."
+            ),
+            "input_message": tampered_sha3,
+            "expected_result": (
+                "Unkeyed SHA3-256 MUST fail to prevent active tampering when digest is recomputed. "
+                "HMAC-SHA3-256 MUST successfully block the forged message."
+            ),
+            "actual_result": (
+                f"Unkeyed SHA3-256 check EVADED: Verified={res_unkeyed['verified']} (Digest match confirmed). "
+                f"HMAC-SHA3-256 enforcement BLOCKED: Verified={res_hmac['verified']} (Error={res_hmac.get('error')})"
+            ),
+            "detection_method": "NIST FIPS 198-1 HMAC-SHA3-256 Secret Key Authentication",
+            "security_explanation": (
+                "CRITICAL CRYPTOGRAPHIC PRINCIPLE: An unkeyed hash function (MD5, SHA-256, SHA3-256) provides "
+                "integrity only against random/accidental transmission errors, NOT against an active adversary. "
+                "Anyone can compute SHA3-256(tampered). Sender authenticity and active MITM resistance "
+                "fundamentally require a secret key (HMAC or digital signature)."
+            ),
+            "details": {
+                "unkeyed_sha3_verified": res_unkeyed["verified"],
+                "unkeyed_sha3_error": res_unkeyed.get("error"),
+                "hmac_sha3_verified": res_hmac["verified"],
+                "hmac_sha3_error": res_hmac.get("error"),
+                "recomputed_digest": recomputed_digest,
+            },
+        }

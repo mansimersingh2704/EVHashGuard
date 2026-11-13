@@ -94,3 +94,13 @@ async def api_attack_firmware_mod(
     res = AttackSimulator.simulate_firmware_modification(message)
     await record_attack_audit(res, db)
     return res
+
+
+@router.post("/attacks/unkeyed-recomputation")
+async def api_attack_unkeyed_recomputation(
+    message: Optional[Dict[str, Any]] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    res = AttackSimulator.simulate_unkeyed_digest_recomputation(message)
+    await record_attack_audit(res, db)
+    return res

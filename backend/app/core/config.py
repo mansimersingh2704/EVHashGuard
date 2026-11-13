@@ -65,27 +65,49 @@ def _load_key_registry() -> Dict[str, bytes]:
     """
     Builds the active key store combining development defaults with environment secrets.
     Does NOT hardcode production secrets; environment overrides development defaults.
+    STRICT SECURITY ENFORCEMENT: Malformed environment configuration fails fast with a RuntimeError
+    and NEVER silently falls back to insecure development keys.
     """
     registry = dict(_DEVELOPMENT_KEYS)
     
+    # Optional production posture: purge insecure development keys
+    if os.getenv("STRICT_PRODUCTION_KEYS", "false").lower() in ("true", "1", "yes"):
+        registry.clear()
+    
     # 1. Check EV_KEY_REGISTRY_JSON env var
     env_registry_json = os.getenv("EV_KEY_REGISTRY_JSON")
-    if env_registry_json:
+    if env_registry_json is not None:
         try:
             parsed = json.loads(env_registry_json)
+            if not isinstance(parsed, dict) or not parsed:
+                raise ValueError("EV_KEY_REGISTRY_JSON must be a non-empty JSON object mapping key_id -> 64-char hex key")
             for kid, hex_val in parsed.items():
-                registry[kid] = bytes.fromhex(hex_val)
-        except Exception:
-            pass  # Fallback to standard keys if JSON is malformed
+                if not isinstance(kid, str) or not isinstance(hex_val, str):
+                    raise ValueError(f"Mapping for '{kid}' must be string key_id -> hex string")
+                clean_hex = hex_val.strip()
+                if len(clean_hex) != 64:
+                    raise ValueError(f"Key '{kid}' must be exactly 256 bits (64 hex characters), got {len(clean_hex)}")
+                registry[kid] = bytes.fromhex(clean_hex)
+        except Exception as e:
+            raise RuntimeError(
+                f"FATAL CONFIGURATION ERROR: Malformed EV_KEY_REGISTRY_JSON. "
+                f"Refusing to start with silent fallback to insecure development keys: {e}"
+            ) from e
             
     # 2. Check individual key environment variables: EV_KEY_<KEY_ID>
     for env_k, env_v in os.environ.items():
-        if env_k.startswith("EV_KEY_"):
+        if env_k.startswith("EV_KEY_") and env_k != "EV_KEY_REGISTRY_JSON":
             kid = env_k[7:].lower().replace("_", "-")
             try:
-                registry[kid] = bytes.fromhex(env_v)
-            except ValueError:
-                registry[kid] = env_v.encode("utf-8")
+                clean_hex = env_v.strip()
+                if len(clean_hex) != 64:
+                    raise ValueError(f"Environment variable {env_k} must contain a 64-character hex string (256-bit key), got {len(clean_hex)}")
+                registry[kid] = bytes.fromhex(clean_hex)
+            except Exception as e:
+                raise RuntimeError(
+                    f"FATAL CONFIGURATION ERROR: Malformed environment key in {env_k}. "
+                    f"Refusing to start with silent fallback: {e}"
+                ) from e
                 
     return registry
 

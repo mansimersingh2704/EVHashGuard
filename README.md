@@ -8,7 +8,8 @@
 [![React 18](https://img.shields.io/badge/React-18.3+-61dafb.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178c6.svg)](https://www.typescriptlang.org/)
 [![NIST FIPS 202](https://img.shields.io/badge/NIST-FIPS_202_(SHA3)-green.svg)](https://csrc.nist.gov/publications/detail/fips/202/final)
-[![Tests Passing](https://img.shields.io/badge/pytest-55%20passed-brightgreen.svg)]()
+[![RFC 8785](https://img.shields.io/badge/RFC-8785_(JCS)-blueviolet.svg)](https://www.rfc-editor.org/rfc/rfc8785)
+[![Tests Passing](https://img.shields.io/badge/pytest-66%20passed-brightgreen.svg)]()
 
 ---
 
@@ -199,7 +200,7 @@ docker-compose up --build
 
 ## 6. Running Automated Tests
 
-EVHashGuard includes 55 comprehensive automated tests covering all cryptographic vectors, collision pairs, attack scenarios, REST API routes, and 20 specific security regression tests:
+EVHashGuard includes 66 comprehensive automated tests covering all cryptographic vectors, collision pairs, attack scenarios, REST API routes, normative RFC 8785 vectors, and 22 specific security regression audit tests:
 
 ```bash
 cd backend
@@ -210,24 +211,25 @@ python -m pytest tests/ -v
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.14.3, pytest-9.1.1
-collected 55 items
+collected 66 items
 
-tests/test_api.py ............                               [ 21%]
-tests/test_attacks.py .......                                [ 34%]
-tests/test_collision.py ...                                  [ 40%]
-tests/test_crypto.py ......                                  [ 50%]
-tests/test_migration.py .......                              [ 63%]
-tests/test_regression_audit.py ....................          [100%]
+tests/test_api.py ............                               [ 18%]
+tests/test_attacks.py ........                               [ 30%]
+tests/test_collision.py ...                                  [ 34%]
+tests/test_crypto.py ......                                  [ 43%]
+tests/test_migration.py .......                              [ 54%]
+tests/test_regression_audit.py ......................        [ 87%]
+tests/test_rfc8785_canonicalization.py ........             [100%]
 
-======================== 55 passed in 2.55s ========================
+======================== 66 passed in 2.46s ========================
 ```
 
-### Security Regression Test Suite (tests/test_regression_audit.py)
+### Security Regression Audit Suite (tests/test_regression_audit.py)
 1. `test_01_md5_digest_verification`: Legacy MD5 baseline verification.
 2. `test_02_sha3_256_verification`: Unkeyed SHA3-256 integrity validation.
 3. `test_03_hmac_sha3_256_verification`: Authenticated HMAC-SHA3-256 validation.
 4. `test_04_malformed_digest`: Safe rejection of odd-length, non-hex, or truncated digests.
-5. `test_05_metadata_modification`: Rejection upon envelope version or outer metadata tampering.
+5. `test_05_metadata_modification`: Strict rejection on missing, unsupported, or modified envelope version.
 6. `test_06_algorithm_field_substitution`: Prevention of algorithm claim substitution.
 7. `test_07_key_id_substitution`: Prevention of unauthorized key ID tampering.
 8. `test_08_timestamp_modification`: Rejection of modified envelope timestamps.
@@ -236,34 +238,59 @@ tests/test_regression_audit.py ....................          [100%]
 11. `test_11_hmac_to_sha3_downgrade`: Prevention of downgrade from HMAC-SHA3-256 to unkeyed SHA3.
 12. `test_12_replay_of_identical_message`: Persistent SQLite duplicate nonce detection.
 13. `test_13_replay_after_backend_restart`: Replay rejection persists across backend restarts.
-14. `test_14_concurrent_duplicate_nonce_requests`: Atomic duplicate nonce handling under concurrency.
+14. `test_14_concurrent_duplicate_nonce_requests`: Atomic duplicate nonce handling under concurrency via SAVEPOINT.
 15. `test_15_invalid_ocpp_call`: Frame length and type enforcement on OCPP CALL frames.
 16. `test_16_invalid_ocpp_callresult`: Frame length and type enforcement on CALLRESULT frames.
 17. `test_17_invalid_ocpp_callerror`: Frame length and type enforcement on CALLERROR frames.
 18. `test_18_parser_rejection_after_successful_hash_verification`: Separation of crypto vs parser validation (dispatch dropped).
 19. `test_19_tampered_payload`: Payload bit-flip detection over RFC 8785 canonical bytes.
 20. `test_20_unknown_key_rejection`: Rejection of unknown or unconfigured key identifiers.
+21. `test_21_malformed_key_registry_prevents_silent_fallback`: Fails fast (RuntimeError) on malformed environment key configurations with zero silent fallbacks.
+22. `test_22_unkeyed_digest_recomputation_fails_authenticity`: Demonstrates unkeyed hash recomputation vulnerability and HMAC authenticity defense.
 
 ---
 
-## 7. Empirical Research Findings
+## 7. Empirical Research Findings & Reproducible Benchmarks
 
-Performance was benchmarked over 100 repeated trials ($N=100$) using high-precision timers:
+All benchmark metrics are genuinely reproducible using the committed benchmark runner script:
 
-- **MD5 Computation Latency:** Mean = 0.0058 ms (Broken security)
-- **SHA3-256 Computation Latency:** Mean = 0.0115 ms (NIST Recommended)
-- **Full EVHashGuard Envelope (HMAC-SHA3-256 + Canonicalization):** Mean = 0.0561 ms
-- **Full Verification + Legacy Parser Dispatch:** Mean = 0.0648 ms
-- **Roundtrip Wrapper Overhead:** **~0.12 ms** (Represents less than 0.2% of typical 20–100 ms cellular network latency).
-- **OCPP Message Compatibility:** **100%** across all standard OCPP 1.6 messages with **zero code modifications** to downstream parsers.
+```bash
+cd backend
+python scripts/run_benchmarks.py
+```
+
+### Empirical Measurements ($N=1000$ trials, StopTransaction frame):
+
+| Operation | Mean ($\mu$s) | Median ($\mu$s) | StdDev ($\mu$s) | P95 ($\mu$s) | Mean (ms) | Iterations |
+|---|---|---|---|---|---|---|
+| **MD5 (Raw Digest)** | 1.733 | 1.700 | 0.516 | 1.800 | 0.00173 | 1,000 |
+| **SHA-1 (Raw Digest)** | 1.309 | 1.300 | 0.417 | 1.400 | 0.00131 | 1,000 |
+| **SHA-256 (Raw Digest)** | 1.342 | 1.300 | 0.436 | 1.400 | 0.00134 | 1,000 |
+| **SHA3-256 (Raw Keccak)** | 2.581 | 2.500 | 0.689 | 3.100 | 0.00258 | 1,000 |
+| **HMAC-SHA3-256 (Raw MAC)** | 6.294 | 6.200 | 0.672 | 6.400 | 0.00629 | 1,000 |
+| **RFC 8785 Canonicalization** | 48.641 | 47.600 | 5.380 | 54.500 | 0.04864 | 1,000 |
+| **CryptoWrapper.wrap (HMAC-SHA3)** | 95.011 | 88.100 | 20.016 | 134.400 | 0.09501 | 1,000 |
+| **CryptoWrapper.verify (In-Memory)** | 114.192 | 104.150 | 25.925 | 159.300 | 0.11419 | 1,000 |
+| **CryptoWrapper.verify_async (SQLite Replay)** | 4,318.285 | 4,133.900 | 1,079.816 | 6,178.700 | 4.31828 | 500 |
+
+*Raw benchmark outputs are version-controlled in `research/benchmark_results.json`.*
 
 ---
 
-## 8. Limitations & Future Scope
+## 8. Limitations & Security Scope
 
-### Limitations
-- **Key Management:** In simulated standalone mode, symmetric keys for HMAC-SHA3-256 are ephemeral and generated at server startup. Production deployment requires hardware security modules (HSM) or cloud KMS integration.
-- **Embedded Acceleration:** Older 8-bit or 16-bit microcontrollers in legacy EVSEs may lack Keccak acceleration, necessitating asymmetric pre-computation or edge proxy gateway devices.
+> **RESEARCH & EDUCATIONAL DISCLAIMER:**  
+> EVHashGuard is an experimental research and educational framework. It is **NOT** formally certified under Common Criteria, FIPS 140-3, or ISO 15118-20, and is **NOT** recommended for direct unvetted deployment in production EV charging networks without hardware-backed root-of-trust (TPM/HSM) integration.
+
+### Core Architectural Distinctions:
+1. **Unkeyed Hashing vs. Keyed Authentication**:
+   - `sha3_256` mode provides **integrity only** against transmission bit flips. An active in-flight adversary can modify the payload and recompute a matching SHA3-256 digest without keys.
+   - `hmac_sha3_256` mode provides **sender authenticity and tamper resistance** because computing valid tags requires knowledge of the pre-shared 256-bit secret key.
+2. **Structural Frame Validation vs. Full PDU Schema Validation**:
+   - EVHashGuard's `OCPPParser` performs **structural frame validation** (verifying JSON array format, message type IDs [2, 3, 4], frame element count, and string `UniqueId`).
+   - It **does not** perform full PDU JSON Schema semantic validation of action-specific payloads (e.g. verifying internal `BootNotification` or `MeterValues` fields). Full application semantics remain the responsibility of downstream CSMS parsers.
+3. **Key Management Scope**:
+   - While environment configuration (`EV_KEY_REGISTRY_JSON`) and fail-fast validation are implemented, production systems require automated key rotation via PKI certificates or cloud KMS rather than static environment variables.
 
 ### Future Scope
 - **Post-Quantum Cryptography (PQC):** Integration of ML-DSA (Dilithium) and ML-KEM (Kyber) for quantum-resistant firmware signing per NIST FIPS 204 and FIPS 203.

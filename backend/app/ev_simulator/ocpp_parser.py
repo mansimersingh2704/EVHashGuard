@@ -3,8 +3,18 @@ from typing import Dict, Any, List, Tuple
 
 class OCPPParser:
     """
-    Standard-compliant strict validator and minimal parser for OCPP 1.6-J messages.
+    Standard-compliant strict structural frame validator for OCPP 1.6-J messages.
     Validates protocol frame structures without mutating the original payload.
+
+    IMPORTANT ARCHITECTURAL DISTINCTION:
+    - Scope: STRUCTURAL FRAME VALIDATION (Transport/Gateway Boundary)
+      Validates JSON array framing, message type identifiers (2, 3, 4), exact frame element counts,
+      strict non-coerced string UniqueId (1-36 chars), dictionary payload typing, and recognized action names.
+    - Non-Scope: FULL PDU JSON SCHEMA VALIDATION (Application/CSMS Boundary)
+      Does NOT validate specific internal PDU fields (e.g. BootNotification chargePointVendor, MeterValues
+      sampledValue arrays). Decoupling structural frame validation from application schema validation ensures
+      the cryptographic wrapper functions transparently without requiring updates whenever proprietary
+      vendor PDU extensions or custom actions are introduced.
     """
 
     MESSAGE_TYPES = {

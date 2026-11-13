@@ -41,35 +41,19 @@ class CryptoWrapper:
     @classmethod
     def canonicalize(cls, data: Any) -> bytes:
         """
-        Produces deterministic RFC 8785 JSON Canonicalization Scheme (JCS) byte sequence.
-        - Alphabetically sorted keys at all dictionary levels
-        - No whitespace between tokens (separators: ',' and ':')
-        - UTF-8 encoded output without byte-order mark
-        - Strict JSON data validation (rejects NaN, Infinity)
+        Produces genuinely RFC 8785 JSON Canonicalization Scheme (JCS) byte sequence.
+        - Strict UTF-16 code unit ordering of object keys
+        - ECMAScript 2015 Number to String serialization (e.g. 1.0 -> 1)
+        - Rejection of NaN and Infinity (FloatDomainError)
+        - Rejection of non-string object keys (CanonicalizationError)
+        - No whitespace between tokens
+        - UTF-8 output without BOM
         """
-        def _validate_jcs_value(val: Any) -> None:
-            if isinstance(val, float):
-                if math.isnan(val) or math.isinf(val):
-                    raise ValueError("RFC 8785 disallows NaN and Infinity in canonical JSON")
-            elif isinstance(val, dict):
-                for k, v in val.items():
-                    if not isinstance(k, str):
-                        raise TypeError(f"RFC 8785 requires string dictionary keys, got {type(k).__name__}")
-                    _validate_jcs_value(v)
-            elif isinstance(val, list):
-                for elem in val:
-                    _validate_jcs_value(elem)
-
-        _validate_jcs_value(data)
-
-        canonical_str = json.dumps(
-            data,
-            sort_keys=True,
-            separators=(',', ':'),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-        return canonical_str.encode('utf-8')
+        import rfc8785
+        try:
+            return rfc8785.dumps(data)
+        except Exception as e:
+            raise ValueError(f"RFC 8785 canonicalization failed: {e}") from e
 
     @classmethod
     def wrap(
@@ -248,6 +232,27 @@ class CryptoWrapper:
                 "dispatched_to_legacy_parser": False,
             }
 
+        # 3. Wrapper Version Validation against SUPPORTED_SPEC_VERSIONS
+        if mode in ("sha3_256", "hmac_sha3_256"):
+            if not version or not isinstance(version, str):
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "MISSING_WRAPPER_VERSION",
+                    "details": "Integrity metadata must include an explicit 'wrapper_version' string",
+                    "dispatched_to_legacy_parser": False,
+                }
+            if version not in cls.SUPPORTED_SPEC_VERSIONS:
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "UNSUPPORTED_WRAPPER_VERSION",
+                    "details": f"Wrapper version '{version}' is unsupported. Supported: {sorted(list(cls.SUPPORTED_SPEC_VERSIONS))}",
+                    "dispatched_to_legacy_parser": False,
+                }
+
         # 3. Digest Validation (Safe Hex & Length Check)
         if not digest or not isinstance(digest, str):
             return {
@@ -341,7 +346,7 @@ class CryptoWrapper:
                 "nonce": nonce,
                 "payload": payload,
                 "timestamp": timestamp_str,
-                "wrapper_version": version or cls.WRAPPER_SPEC_VERSION,
+                "wrapper_version": version,
             }
             auth_bytes = cls.canonicalize(auth_context)
             computed = hashlib.sha3_256(auth_bytes).hexdigest()
@@ -377,7 +382,7 @@ class CryptoWrapper:
                 "nonce": nonce,
                 "payload": payload,
                 "timestamp": timestamp_str,
-                "wrapper_version": version or cls.WRAPPER_SPEC_VERSION,
+                "wrapper_version": version,
             }
             auth_bytes = cls.canonicalize(auth_context)
             crypto_valid = verify_hmac_sha3_256(auth_bytes, key, clean_digest)

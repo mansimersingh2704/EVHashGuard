@@ -147,9 +147,9 @@ export const MigrationPage: React.FC = () => {
           <span className="text-xs text-slate-400 font-medium">Migration Mode:</span>
           <div className="flex flex-wrap gap-2">
             {[
-              { id: 'legacy_md5', label: 'Legacy MD5 (Unsafe)', icon: Layers },
-              { id: 'sha3_256', label: 'SHA3-256 (Integrity Enveloped)', icon: Lock },
-              { id: 'hmac_sha3_256', label: 'HMAC-SHA3-256 (Authenticated)', icon: KeyRound },
+              { id: 'legacy_md5', label: 'Legacy MD5 (Unsafe - Broken)', icon: Layers },
+              { id: 'sha3_256', label: 'SHA3-256 (Integrity Only - Unauthenticated)', icon: Lock },
+              { id: 'hmac_sha3_256', label: 'HMAC-SHA3-256 (Authenticated Origin)', icon: KeyRound },
             ].map((m) => {
               const Icon = m.icon;
               const active = mode === m.id;

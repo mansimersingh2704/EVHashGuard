@@ -42,3 +42,13 @@ class TestAttackSimulationLab:
         res = AttackSimulator.simulate_firmware_modification()
         assert res["attack_type"] == "FIRMWARE_METADATA_MODIFICATION"
         assert res["detected"] is True
+
+    def test_unkeyed_digest_recomputation_simulation(self):
+        res = AttackSimulator.simulate_unkeyed_digest_recomputation()
+        assert res["attack_type"] == "UNKEYED_DIGEST_RECOMPUTATION"
+        # Crucial cryptographic property: Unkeyed SHA3-256 FAILS to detect recomputation (detected is False)
+        assert res["detected"] is False
+        assert res["defense_successful"] is False
+        # But HMAC-SHA3-256 blocks it
+        assert res["details"]["unkeyed_sha3_verified"] is True
+        assert res["details"]["hmac_sha3_verified"] is False

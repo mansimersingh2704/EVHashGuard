@@ -77,28 +77,33 @@ class PersistentReplayProtection:
         allowed_window = window_seconds if window_seconds is not None else settings.REPLAY_WINDOW_SECONDS
         expires_at = now + timedelta(seconds=allowed_window)
 
-        # 1. Query for existing consumed nonce
-        existing_q = await session.execute(
-            select(ConsumedNonce).where(ConsumedNonce.nonce == nonce.strip())
-        )
+        # 1. Query for existing consumed nonce (supporting station-scoped verification)
+        query = select(ConsumedNonce).where(ConsumedNonce.nonce == nonce.strip())
+        if station_id:
+            query = query.where(
+                (ConsumedNonce.station_id == station_id.strip()) | (ConsumedNonce.station_id.is_(None))
+            )
+        existing_q = await session.execute(query)
         existing = existing_q.scalar_one_or_none()
         if existing is not None:
-            return False, f"REPLAY_ATTACK_DETECTED: Nonce '{nonce}' has already been consumed at {existing.created_at.isoformat()}"
+            station_info = f" for station '{existing.station_id}'" if existing.station_id else ""
+            return False, f"REPLAY_ATTACK_DETECTED: Nonce '{nonce}' has already been consumed{station_info} at {existing.created_at.isoformat()}"
 
-        # 2. Insert new consumed nonce record
+        # 2. Insert new consumed nonce record using a SAVEPOINT (begin_nested)
+        # Guarantees that if a concurrent collision occurs, only the savepoint rolls back,
+        # preserving the parent transaction so audit logs and responses can still be committed.
         record = ConsumedNonce(
             nonce=nonce.strip(),
-            station_id=station_id,
+            station_id=station_id.strip() if station_id else None,
             message_timestamp=msg_dt,
             expires_at=expires_at,
         )
-        session.add(record)
 
         try:
-            await session.flush()
+            async with session.begin_nested():
+                session.add(record)
+                await session.flush()
         except IntegrityError:
-            # Handles atomic race conditions from concurrent duplicate requests
-            await session.rollback()
             return False, f"REPLAY_ATTACK_DETECTED: Concurrent duplicate nonce '{nonce}' rejected"
 
         return True, "Nonce successfully consumed and registered"

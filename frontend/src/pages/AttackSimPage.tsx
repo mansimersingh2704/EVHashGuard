@@ -86,6 +86,15 @@ export const AttackSimPage: React.FC = () => {
         'Falsifies FirmwareStatusNotification to report rogue firmware as legitimately installed.',
       fn: () => api.simulateFirmwareMod(),
     },
+    {
+      id: 'unkeyed_recomp',
+      name: 'MITM Unkeyed Digest Recomputation',
+      icon: KeyRound,
+      category: 'Cryptographic Integrity vs Authenticity',
+      description:
+        'Alters payload and recomputes unkeyed SHA3-256 digest. Evades unkeyed detection; fails against HMAC authentication.',
+      fn: () => api.simulateUnkeyedRecomputation(),
+    },
   ];
 
   const runAttack = async (attack: (typeof attacks)[0]) => {

@@ -237,7 +237,7 @@ export const CollisionPage: React.FC = () => {
           <AlertBanner
             type="warning"
             title="Operational Impact on EV Charging Infrastructure"
-            message="If an EV firmware verification system or CSMS relies on MD5 to authenticate firmware binaries or meter readings, an attacker can substitute benign firmware with malicious code crafted to match the exact same MD5 digest, bypassing the check entirely. Modern algorithms (SHA-256, SHA3-256) cleanly separate the collision pair as shown above."
+            message="If an EV firmware verification system or CSMS relies on MD5 to verify firmware binaries or meter readings, an attacker can substitute benign firmware with malicious code crafted to match the exact same MD5 digest, bypassing the check entirely. Note that unkeyed digests never provide sender authentication. Modern algorithms (SHA-256, SHA3-256) cleanly separate the collision pair as shown above."
           />
         </div>
       )}

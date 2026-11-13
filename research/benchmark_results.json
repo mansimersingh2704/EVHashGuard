@@ -1,0 +1,92 @@
+{
+  "MD5 (Raw Digest)": {
+    "mean_us": 1.733,
+    "median_us": 1.7,
+    "stddev_us": 0.516,
+    "min_us": 1.6,
+    "max_us": 16.0,
+    "p95_us": 1.8,
+    "mean_ms": 0.00173,
+    "iterations": 1000
+  },
+  "SHA-1 (Raw Digest)": {
+    "mean_us": 1.309,
+    "median_us": 1.3,
+    "stddev_us": 0.417,
+    "min_us": 1.2,
+    "max_us": 11.9,
+    "p95_us": 1.4,
+    "mean_ms": 0.00131,
+    "iterations": 1000
+  },
+  "SHA-256 (Raw Digest)": {
+    "mean_us": 1.342,
+    "median_us": 1.3,
+    "stddev_us": 0.436,
+    "min_us": 1.3,
+    "max_us": 15.0,
+    "p95_us": 1.4,
+    "mean_ms": 0.00134,
+    "iterations": 1000
+  },
+  "SHA3-256 (Raw Keccak)": {
+    "mean_us": 2.581,
+    "median_us": 2.5,
+    "stddev_us": 0.689,
+    "min_us": 2.4,
+    "max_us": 19.8,
+    "p95_us": 3.1,
+    "mean_ms": 0.00258,
+    "iterations": 1000
+  },
+  "HMAC-SHA3-256 (Raw MAC)": {
+    "mean_us": 6.294,
+    "median_us": 6.2,
+    "stddev_us": 0.672,
+    "min_us": 6.0,
+    "max_us": 16.9,
+    "p95_us": 6.4,
+    "mean_ms": 0.00629,
+    "iterations": 1000
+  },
+  "RFC 8785 Canonicalization": {
+    "mean_us": 48.641,
+    "median_us": 47.6,
+    "stddev_us": 5.38,
+    "min_us": 46.1,
+    "max_us": 116.7,
+    "p95_us": 54.5,
+    "mean_ms": 0.04864,
+    "iterations": 1000
+  },
+  "CryptoWrapper.wrap (HMAC-SHA3)": {
+    "mean_us": 95.011,
+    "median_us": 88.1,
+    "stddev_us": 20.016,
+    "min_us": 83.4,
+    "max_us": 419.3,
+    "p95_us": 134.4,
+    "mean_ms": 0.09501,
+    "iterations": 1000
+  },
+  "CryptoWrapper.verify (In-Memory)": {
+    "mean_us": 114.192,
+    "median_us": 104.15,
+    "stddev_us": 25.925,
+    "min_us": 96.8,
+    "max_us": 495.7,
+    "p95_us": 159.3,
+    "mean_ms": 0.11419,
+    "iterations": 1000
+  },
+  "CryptoWrapper.verify_async (SQLite Replay)": {
+    "mean_us": 4318.285,
+    "median_us": 4133.9,
+    "stddev_us": 1079.816,
+    "min_us": 2239.8,
+    "max_us": 8567.1,
+    "p95_us": 6178.7,
+    "mean_ms": 4.31828,
+    "iterations": 500
+  }
+}
