@@ -1,36 +1,75 @@
 import json
 import hashlib
+import hmac
 import uuid
+import math
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 
-from app.core.config import settings, get_hmac_key
+from app.core.config import settings, get_key
 from app.crypto.hmac_engine import compute_hmac_sha3_256, verify_hmac_sha3_256
 from app.ev_simulator.ocpp_parser import OCPPParser
+from app.migration.replay import PersistentReplayProtection
 
 
 class CryptoWrapper:
     """
-    EVHashGuard Backward-Compatible Cryptographic Migration Wrapper.
+    EVHashGuard Backward-Compatible Cryptographic Migration Wrapper (Specification v2.1.0-sha3).
 
-    Architectural position: Operates transparently between incoming transport
-    and the legacy message parser.
+    Architectural position: Operates transparently between transport ingress
+    and legacy OCPP parsers.
 
-    Integrity pipeline:
-    Incoming Message -> Wrapper Envelope Check -> Cryptographic Verification
-    -> Legacy Parser Forwarding.
+    Integrity & Authentication pipeline:
+    1. Envelope Validation (Type, structure, mode, and digest formatting)
+    2. Downgrade Prevention Policy Enforcement
+    3. Timestamp Freshness & Replay Verification
+    4. Deterministic Canonicalization (RFC 8785 restricted profile)
+    5. Constant-Time Cryptographic Verification
+    6. Protocol Structural Validation via OCPPParser
+    7. Conditional Dispatch: Only dispatch if BOTH cryptographic & protocol checks pass.
     """
 
     SUPPORTED_MODES = {"legacy_md5", "sha3_256", "hmac_sha3_256"}
+    VALID_ALGORITHMS = {
+        "legacy_md5": "MD5",
+        "sha3_256": "SHA3-256",
+        "hmac_sha3_256": "HMAC-SHA3-256",
+    }
     WRAPPER_SPEC_VERSION = "2.1.0-sha3"
+    SUPPORTED_SPEC_VERSIONS = {"2.1.0-sha3", "2.0.0-sha3", "2.1.0"}
 
-    @staticmethod
-    def canonicalize(payload: Any) -> bytes:
+    @classmethod
+    def canonicalize(cls, data: Any) -> bytes:
         """
-        Produces deterministic RFC 8785-style canonical JSON byte sequence.
-        Keys are sorted; whitespace is stripped.
+        Produces deterministic RFC 8785 JSON Canonicalization Scheme (JCS) byte sequence.
+        - Alphabetically sorted keys at all dictionary levels
+        - No whitespace between tokens (separators: ',' and ':')
+        - UTF-8 encoded output without byte-order mark
+        - Strict JSON data validation (rejects NaN, Infinity)
         """
-        return json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        def _validate_jcs_value(val: Any) -> None:
+            if isinstance(val, float):
+                if math.isnan(val) or math.isinf(val):
+                    raise ValueError("RFC 8785 disallows NaN and Infinity in canonical JSON")
+            elif isinstance(val, dict):
+                for k, v in val.items():
+                    if not isinstance(k, str):
+                        raise TypeError(f"RFC 8785 requires string dictionary keys, got {type(k).__name__}")
+                    _validate_jcs_value(v)
+            elif isinstance(val, list):
+                for elem in val:
+                    _validate_jcs_value(elem)
+
+        _validate_jcs_value(data)
+
+        canonical_str = json.dumps(
+            data,
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return canonical_str.encode('utf-8')
 
     @classmethod
     def wrap(
@@ -38,38 +77,59 @@ class CryptoWrapper:
         message: Dict[str, Any],
         mode: str = "sha3_256",
         key_id: Optional[str] = None,
+        nonce: Optional[str] = None,
+        timestamp: Optional[str] = None,
         custom_key: Optional[bytes] = None,
     ) -> Dict[str, Any]:
         """
-        Envelopes the message with external cryptographic metadata without modifying
-        the original message payload or OCPP frame structure.
+        Envelopes the message payload with authenticated cryptographic metadata without
+        modifying the original message payload or OCPP frame structure.
         """
         if mode not in cls.SUPPORTED_MODES:
-            raise ValueError(f"Unsupported migration mode: {mode}. Must be one of {cls.SUPPORTED_MODES}")
+            raise ValueError(f"Unsupported migration mode: '{mode}'. Must be one of {cls.SUPPORTED_MODES}")
 
-        # The message payload to authenticate
-        canonical_bytes = cls.canonicalize(message)
-        now_utc = datetime.now(timezone.utc).isoformat()
+        now_utc = timestamp or datetime.now(timezone.utc).isoformat()
+        msg_nonce = nonce or str(uuid.uuid4())
+        algo_name = cls.VALID_ALGORITHMS[mode]
 
         if mode == "legacy_md5":
-            digest = hashlib.md5(canonical_bytes).hexdigest()
-            algo_name = "MD5"
-            security_tier = "LEGACY_DEPRECATED"
-            is_authenticated = False
+            # Legacy MD5 historically only authenticated the payload
+            auth_bytes = cls.canonicalize(message)
+            digest = hashlib.md5(auth_bytes).hexdigest()
+            is_keyed = False
             kid = None
         elif mode == "sha3_256":
-            digest = hashlib.sha3_256(canonical_bytes).hexdigest()
-            algo_name = "SHA3-256"
-            security_tier = "MIGRATED_INTEGRITY"
-            is_authenticated = False
+            # Authenticates all security-critical envelope fields to prevent metadata substitution
+            auth_context = {
+                "algorithm": algo_name,
+                "mode": mode,
+                "nonce": msg_nonce,
+                "payload": message,
+                "timestamp": now_utc,
+                "wrapper_version": cls.WRAPPER_SPEC_VERSION,
+            }
+            auth_bytes = cls.canonicalize(auth_context)
+            digest = hashlib.sha3_256(auth_bytes).hexdigest()
+            is_keyed = False
             kid = None
         elif mode == "hmac_sha3_256":
-            key = custom_key if custom_key is not None else get_hmac_key()
-            kid = key_id or "key-active-csms-primary"
-            digest = compute_hmac_sha3_256(canonical_bytes, key)
-            algo_name = "HMAC-SHA3-256"
-            security_tier = "MIGRATED_AUTHENTICATED"
-            is_authenticated = True
+            kid = key_id or settings.DEFAULT_KEY_ID
+            key = custom_key if custom_key is not None else get_key(kid)
+            if key is None:
+                raise ValueError(f"Unknown key identifier: '{kid}'")
+
+            auth_context = {
+                "algorithm": algo_name,
+                "key_id": kid,
+                "mode": mode,
+                "nonce": msg_nonce,
+                "payload": message,
+                "timestamp": now_utc,
+                "wrapper_version": cls.WRAPPER_SPEC_VERSION,
+            }
+            auth_bytes = cls.canonicalize(auth_context)
+            digest = compute_hmac_sha3_256(auth_bytes, key)
+            is_keyed = True
         else:
             raise ValueError(f"Invalid mode: {mode}")
 
@@ -79,14 +139,14 @@ class CryptoWrapper:
             "algorithm": algo_name,
             "digest": digest,
             "digest_bits": len(digest) * 4,
-            "is_keyed_mac": is_authenticated,
+            "is_keyed_mac": is_keyed,
             "key_id": kid,
-            "canonical_bytes_len": len(canonical_bytes),
+            "nonce": msg_nonce,
+            "canonical_bytes_len": len(auth_bytes),
             "timestamp": now_utc,
             "downgrade_protection": True,
         }
 
-        # Keep original message 100% unmodified; append envelope outside
         return {
             "payload": message,
             "crypto_metadata": crypto_envelope,
@@ -100,14 +160,26 @@ class CryptoWrapper:
         enforce_mode: Optional[str] = None,
         allow_downgrade: Optional[bool] = None,
         custom_key: Optional[bytes] = None,
+        check_freshness: bool = True,
     ) -> Dict[str, Any]:
         """
-        Verifies the cryptographic envelope of an incoming message before
-        dispatching to the legacy message parser.
+        Synchronous / In-Memory Verification Routine.
+        Strictly verifies:
+        1. Envelope format and types
+        2. Exact algorithm and mode matching
+        3. Downgrade prevention
+        4. Hexadecimal encoding & digest length
+        5. Timestamp freshness (window check)
+        6. Constant-time digest verification over authenticated envelope fields
+        7. OCPP protocol validation
+        Only dispatches to legacy parser if both cryptographic and protocol checks pass.
         """
+        # 1. Structural Validation
         if not isinstance(wrapped_message, dict):
             return {
                 "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
                 "error": "MALFORMED_WRAPPER",
                 "details": "Wrapped message must be a JSON object",
                 "dispatched_to_legacy_parser": False,
@@ -119,98 +191,291 @@ class CryptoWrapper:
         if payload is None:
             return {
                 "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
                 "error": "MISSING_PAYLOAD",
-                "details": "Wrapper has no payload field",
+                "details": "Wrapper envelope has no payload field",
                 "dispatched_to_legacy_parser": False,
             }
 
         if crypto_meta is None or not isinstance(crypto_meta, dict):
             return {
                 "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
                 "error": "MISSING_INTEGRITY_METADATA",
-                "details": "Integrity metadata is missing or invalid. Unverified message rejected.",
+                "details": "Integrity metadata envelope is missing or invalid. Unverified message rejected.",
                 "dispatched_to_legacy_parser": False,
             }
 
         mode = crypto_meta.get("mode")
         algo = crypto_meta.get("algorithm")
         digest = crypto_meta.get("digest")
+        version = crypto_meta.get("wrapper_version")
+        timestamp_str = crypto_meta.get("timestamp")
+        nonce = crypto_meta.get("nonce")
+        key_id = crypto_meta.get("key_id")
 
-        if not mode or not digest:
+        # 2. Type and Metadata Attribute Validation
+        if not mode or not isinstance(mode, str) or mode not in cls.SUPPORTED_MODES:
             return {
                 "verified": False,
-                "error": "INCOMPLETE_METADATA",
-                "details": "Metadata missing mode or digest attribute",
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "UNRECOGNIZED_MODE",
+                "details": f"Unknown or invalid crypto mode: '{mode}'. Must be one of {cls.SUPPORTED_MODES}",
                 "dispatched_to_legacy_parser": False,
             }
 
+        if not algo or not isinstance(algo, str):
+            return {
+                "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "MISSING_ALGORITHM",
+                "details": "Metadata missing algorithm identifier",
+                "dispatched_to_legacy_parser": False,
+            }
+
+        expected_algo = cls.VALID_ALGORITHMS[mode]
+        if algo != expected_algo:
+            return {
+                "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "ALGORITHM_MODE_MISMATCH",
+                "details": f"Algorithm '{algo}' does not match mode '{mode}' (expected '{expected_algo}')",
+                "dispatched_to_legacy_parser": False,
+            }
+
+        # 3. Digest Validation (Safe Hex & Length Check)
+        if not digest or not isinstance(digest, str):
+            return {
+                "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "MISSING_DIGEST",
+                "details": "Digest must be a valid hexadecimal string",
+                "dispatched_to_legacy_parser": False,
+            }
+
+        expected_lengths = {"legacy_md5": 32, "sha3_256": 64, "hmac_sha3_256": 64}
+        expected_len = expected_lengths[mode]
+        clean_digest = digest.strip().lower()
+
+        if len(clean_digest) != expected_len:
+            return {
+                "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "MALFORMED_DIGEST",
+                "details": f"Invalid digest length for {algo}: got {len(clean_digest)} hex chars, expected {expected_len}",
+                "dispatched_to_legacy_parser": False,
+            }
+
+        try:
+            bytes.fromhex(clean_digest)
+        except ValueError:
+            return {
+                "verified": False,
+                "crypto_verified": False,
+                "protocol_verified": False,
+                "error": "MALFORMED_DIGEST",
+                "details": "Digest contains non-hexadecimal characters",
+                "dispatched_to_legacy_parser": False,
+            }
+
+        # 4. Strict Downgrade Prevention
         effective_downgrade_policy = (
             allow_downgrade if allow_downgrade is not None else settings.DOWNGRADE_ALLOWED
         )
 
-        # Downgrade Prevention:
-        # If enforce_mode requires SHA3-256 or HMAC-SHA3-256, but incoming uses MD5,
-        # fail immediately unless downgrade policy explicitly permits it.
-        if enforce_mode and enforce_mode != mode:
-            if enforce_mode in {"sha3_256", "hmac_sha3_256"} and mode == "legacy_md5":
-                if not effective_downgrade_policy:
-                    return {
-                        "verified": False,
-                        "error": "DOWNGRADE_ATTACK_PREVENTED",
-                        "details": (
-                            f"System policy strictly forbids algorithm downgrade from {enforce_mode} "
-                            f"to insecure legacy {mode} (MD5)."
-                        ),
-                        "dispatched_to_legacy_parser": False,
-                        "algorithm": algo,
-                        "mode": mode,
-                    }
+        # Hierarchy: hmac_sha3_256 (Tier 3) > sha3_256 (Tier 2) > legacy_md5 (Tier 1)
+        tier_levels = {"legacy_md5": 1, "sha3_256": 2, "hmac_sha3_256": 3}
 
-        canonical_bytes = cls.canonicalize(payload)
+        if enforce_mode and enforce_mode in tier_levels:
+            required_tier = tier_levels[enforce_mode]
+            incoming_tier = tier_levels[mode]
 
-        # Cryptographic verification
+            if incoming_tier < required_tier and not effective_downgrade_policy:
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "DOWNGRADE_ATTACK_PREVENTED",
+                    "details": (
+                        f"System policy strictly forbids algorithm downgrade from required '{enforce_mode}' "
+                        f"(Tier {required_tier}) to weaker '{mode}' (Tier {incoming_tier})."
+                    ),
+                    "dispatched_to_legacy_parser": False,
+                    "algorithm": algo,
+                    "mode": mode,
+                }
+
+        # 5. Timestamp Freshness Check
+        if check_freshness and timestamp_str:
+            fresh, _, fresh_reason = PersistentReplayProtection.validate_timestamp_freshness(timestamp_str)
+            if not fresh:
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "REPLAY_FRESHNESS_VIOLATION",
+                    "details": fresh_reason,
+                    "dispatched_to_legacy_parser": False,
+                }
+
+        # 6. Cryptographic Verification
         if mode == "legacy_md5":
-            computed = hashlib.md5(canonical_bytes).hexdigest()
+            auth_bytes = cls.canonicalize(payload)
+            computed = hashlib.md5(auth_bytes).hexdigest()
             # Constant-time comparison
-            is_valid = hashlib.md5(canonical_bytes).digest() == bytes.fromhex(digest) if len(digest) == 32 else False
-            warning = "Verified using legacy MD5. Insecure against collision and forgery attacks."
-        elif mode == "sha3_256":
-            computed = hashlib.sha3_256(canonical_bytes).hexdigest()
-            is_valid = (computed.lower() == digest.lower())
-            warning = "SHA3-256 provides preimage and collision resistance; unkeyed integrity only."
-        elif mode == "hmac_sha3_256":
-            key = custom_key if custom_key is not None else get_hmac_key()
-            is_valid = verify_hmac_sha3_256(canonical_bytes, key, digest)
-            computed = compute_hmac_sha3_256(canonical_bytes, key)
-            warning = "HMAC-SHA3-256 provides both cryptographic integrity and endpoint authentication."
-        else:
-            return {
-                "verified": False,
-                "error": "UNRECOGNIZED_MODE",
-                "details": f"Unknown crypto mode: {mode}",
-                "dispatched_to_legacy_parser": False,
-            }
+            crypto_valid = hmac.compare_digest(computed.lower(), clean_digest)
+            warning = "LEGACY NOTICE: MD5 provides zero collision resistance and no origin authentication."
 
-        # If verification passes, optionally run legacy OCPP structural validation
+        elif mode == "sha3_256":
+            # Reconstruct authenticated context binding envelope fields
+            auth_context = {
+                "algorithm": algo,
+                "mode": mode,
+                "nonce": nonce,
+                "payload": payload,
+                "timestamp": timestamp_str,
+                "wrapper_version": version or cls.WRAPPER_SPEC_VERSION,
+            }
+            auth_bytes = cls.canonicalize(auth_context)
+            computed = hashlib.sha3_256(auth_bytes).hexdigest()
+            crypto_valid = hmac.compare_digest(computed.lower(), clean_digest)
+            warning = "SHA3-256 provides unkeyed integrity only; it does NOT provide sender origin authentication."
+
+        elif mode == "hmac_sha3_256":
+            if not key_id and custom_key is None:
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "MISSING_KEY_IDENTIFIER",
+                    "details": "HMAC-SHA3-256 mode requires a valid key_id",
+                    "dispatched_to_legacy_parser": False,
+                }
+
+            key = custom_key if custom_key is not None else get_key(key_id)
+            if key is None:
+                return {
+                    "verified": False,
+                    "crypto_verified": False,
+                    "protocol_verified": False,
+                    "error": "UNKNOWN_KEY_ID",
+                    "details": f"Cryptographic key identifier '{key_id}' is not recognized in active key store",
+                    "dispatched_to_legacy_parser": False,
+                }
+
+            auth_context = {
+                "algorithm": algo,
+                "key_id": key_id,
+                "mode": mode,
+                "nonce": nonce,
+                "payload": payload,
+                "timestamp": timestamp_str,
+                "wrapper_version": version or cls.WRAPPER_SPEC_VERSION,
+            }
+            auth_bytes = cls.canonicalize(auth_context)
+            crypto_valid = verify_hmac_sha3_256(auth_bytes, key, clean_digest)
+            computed = compute_hmac_sha3_256(auth_bytes, key)
+            warning = "HMAC-SHA3-256 verified: Confirms both tamper-evident integrity and authenticated sender origin."
+
+        # 7. Protocol Structural Parser Validation
         parser_valid = True
         parser_info = "Payload did not contain an OCPP frame array"
         if isinstance(payload, list) or (isinstance(payload, dict) and "ocpp_message" in payload):
             frame = payload if isinstance(payload, list) else payload["ocpp_message"]
             parser_valid, parsed_data, parser_info = OCPPParser.validate_and_parse(frame)
 
+        # 8. Conditional Dispatch Determination
+        dispatched = crypto_valid and parser_valid
+        overall_verified = dispatched
+
+        error_reason = None
+        if not crypto_valid:
+            error_reason = "INTEGRITY_VERIFICATION_FAILED"
+            details = "Cryptographic tag mismatch: envelope or payload tampered/forged"
+        elif not parser_valid:
+            error_reason = "PROTOCOL_VALIDATION_FAILED"
+            details = f"Cryptographic check passed, but protocol validation failed: {parser_info}"
+        else:
+            details = "Cryptographic envelope verified and OCPP frame validated successfully"
+
         return {
-            "verified": is_valid,
+            "verified": overall_verified,
+            "crypto_verified": crypto_valid,
+            "protocol_verified": parser_valid,
             "mode": mode,
             "algorithm": algo,
             "computed_digest": computed,
             "provided_digest": digest,
-            "payload_canonical_len": len(canonical_bytes),
-            "dispatched_to_legacy_parser": is_valid,
+            "payload_canonical_len": len(auth_bytes),
+            "dispatched_to_legacy_parser": dispatched,
             "legacy_parser_validation": {
                 "passed": parser_valid,
                 "info": parser_info,
             },
             "security_warning": warning,
-            "error": None if is_valid else "INTEGRITY_VERIFICATION_FAILED",
-            "details": "Cryptographic tag matches canonical representation" if is_valid else "Digest mismatch: payload altered or forged",
+            "error": error_reason,
+            "details": details,
         }
+
+    @classmethod
+    async def verify_async(
+        cls,
+        wrapped_message: Dict[str, Any],
+        enforce_mode: Optional[str] = None,
+        allow_downgrade: Optional[bool] = None,
+        custom_key: Optional[bytes] = None,
+        db_session: Optional[Any] = None,
+        station_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Full Asynchronous Verification Routine incorporating SQLite Persistent Replay Protection.
+        """
+        # Execute in-memory cryptographic verification
+        res = cls.verify(
+            wrapped_message,
+            enforce_mode=enforce_mode,
+            allow_downgrade=allow_downgrade,
+            custom_key=custom_key,
+            check_freshness=True,
+        )
+
+        if not res["verified"]:
+            return res
+
+        # If DB session provided, enforce persistent replay nonce check in SQLite
+        if db_session is not None:
+            crypto_meta = wrapped_message.get("crypto_metadata", {})
+            nonce = crypto_meta.get("nonce")
+            timestamp = crypto_meta.get("timestamp")
+
+            if nonce and timestamp:
+                consumed, replay_reason = await PersistentReplayProtection.check_and_consume_nonce(
+                    session=db_session,
+                    nonce=nonce,
+                    timestamp_str=timestamp,
+                    station_id=station_id,
+                )
+                if not consumed:
+                    return {
+                        "verified": False,
+                        "crypto_verified": True,
+                        "protocol_verified": res["protocol_verified"],
+                        "mode": res["mode"],
+                        "algorithm": res["algorithm"],
+                        "computed_digest": res["computed_digest"],
+                        "provided_digest": res["provided_digest"],
+                        "dispatched_to_legacy_parser": False,
+                        "legacy_parser_validation": res["legacy_parser_validation"],
+                        "security_warning": res["security_warning"],
+                        "error": "REPLAY_ATTACK_DETECTED",
+                        "details": replay_reason,
+                    }
+
+        return res

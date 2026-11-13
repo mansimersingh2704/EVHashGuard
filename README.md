@@ -8,7 +8,7 @@
 [![React 18](https://img.shields.io/badge/React-18.3+-61dafb.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178c6.svg)](https://www.typescriptlang.org/)
 [![NIST FIPS 202](https://img.shields.io/badge/NIST-FIPS_202_(SHA3)-green.svg)](https://csrc.nist.gov/publications/detail/fips/202/final)
-[![Tests Passing](https://img.shields.io/badge/pytest-34%20passed-brightgreen.svg)]()
+[![Tests Passing](https://img.shields.io/badge/pytest-55%20passed-brightgreen.svg)]()
 
 ---
 
@@ -109,13 +109,14 @@ EVHashGuard/
 │   │   │   ├── message_generator.py    # OCPP 1.6-J realistic frames
 │   │   │   └── ocpp_parser.py          # Minimal OCPP 1.6 frame structure parser
 │   │   ├── migration/
-│   │   │   └── wrapper.py              # Backward-compatible wrapper & canonicalization
+│   │   │   ├── wrapper.py              # Backward-compatible wrapper & RFC 8785 canonicalization
+│   │   │   └── replay.py               # Persistent SQLite replay protection & nonce deduplication
 │   │   ├── attacks/
-│   │   │   └── simulator.py            # Red-team attack vectors
+│   │   │   └── simulator.py            # Red-team attack vectors (real verification pipeline)
 │   │   ├── risk_engine/
 │   │   │   └── analyzer.py             # NIST SP 800-131A qualitative risk matrix
 │   │   ├── database/
-│   │   │   └── db.py                   # Async SQLAlchemy models & connection pool
+│   │   │   └── db.py                   # Async SQLAlchemy models (Messages, Nonces, Audits)
 │   │   └── models/
 │   │       └── schemas.py              # Pydantic v2 validation models
 │   ├── tests/
@@ -123,7 +124,8 @@ EVHashGuard/
 │   │   ├── test_collision.py           # Mathematical verification of collision vectors
 │   │   ├── test_migration.py           # Wrapper envelope and downgrade prevention
 │   │   ├── test_attacks.py             # All 7 attack scenarios verified
-│   │   └── test_api.py                 # Full integration test suite for REST routes
+│   │   ├── test_api.py                 # Full integration test suite for REST routes
+│   │   └── test_regression_audit.py    # 20 Critical Security Remediation Regression Tests
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/
@@ -197,7 +199,7 @@ docker-compose up --build
 
 ## 6. Running Automated Tests
 
-EVHashGuard includes 34 comprehensive automated tests covering all cryptographic vectors, collision pairs, attack scenarios, and API endpoints:
+EVHashGuard includes 55 comprehensive automated tests covering all cryptographic vectors, collision pairs, attack scenarios, REST API routes, and 20 specific security regression tests:
 
 ```bash
 cd backend
@@ -208,16 +210,39 @@ python -m pytest tests/ -v
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.14.3, pytest-9.1.1
-collected 34 items
+collected 55 items
 
-tests/test_api.py ......................... [ 32%]
-tests/test_attacks.py .......               [ 52%]
-tests/test_collision.py ...                 [ 61%]
-tests/test_crypto.py ......                 [ 79%]
-tests/test_migration.py .......             [100%]
+tests/test_api.py ............                               [ 21%]
+tests/test_attacks.py .......                                [ 34%]
+tests/test_collision.py ...                                  [ 40%]
+tests/test_crypto.py ......                                  [ 50%]
+tests/test_migration.py .......                              [ 63%]
+tests/test_regression_audit.py ....................          [100%]
 
-======================== 34 passed in 4.99s ========================
+======================== 55 passed in 2.55s ========================
 ```
+
+### Security Regression Test Suite (tests/test_regression_audit.py)
+1. `test_01_md5_digest_verification`: Legacy MD5 baseline verification.
+2. `test_02_sha3_256_verification`: Unkeyed SHA3-256 integrity validation.
+3. `test_03_hmac_sha3_256_verification`: Authenticated HMAC-SHA3-256 validation.
+4. `test_04_malformed_digest`: Safe rejection of odd-length, non-hex, or truncated digests.
+5. `test_05_metadata_modification`: Rejection upon envelope version or outer metadata tampering.
+6. `test_06_algorithm_field_substitution`: Prevention of algorithm claim substitution.
+7. `test_07_key_id_substitution`: Prevention of unauthorized key ID tampering.
+8. `test_08_timestamp_modification`: Rejection of modified envelope timestamps.
+9. `test_09_nonce_modification`: Rejection of modified envelope nonces.
+10. `test_10_sha3_to_md5_downgrade`: Prevention of downgrade from SHA3-256 to MD5.
+11. `test_11_hmac_to_sha3_downgrade`: Prevention of downgrade from HMAC-SHA3-256 to unkeyed SHA3.
+12. `test_12_replay_of_identical_message`: Persistent SQLite duplicate nonce detection.
+13. `test_13_replay_after_backend_restart`: Replay rejection persists across backend restarts.
+14. `test_14_concurrent_duplicate_nonce_requests`: Atomic duplicate nonce handling under concurrency.
+15. `test_15_invalid_ocpp_call`: Frame length and type enforcement on OCPP CALL frames.
+16. `test_16_invalid_ocpp_callresult`: Frame length and type enforcement on CALLRESULT frames.
+17. `test_17_invalid_ocpp_callerror`: Frame length and type enforcement on CALLERROR frames.
+18. `test_18_parser_rejection_after_successful_hash_verification`: Separation of crypto vs parser validation (dispatch dropped).
+19. `test_19_tampered_payload`: Payload bit-flip detection over RFC 8785 canonical bytes.
+20. `test_20_unknown_key_rejection`: Rejection of unknown or unconfigured key identifiers.
 
 ---
 

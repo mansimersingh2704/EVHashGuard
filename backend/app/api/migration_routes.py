@@ -20,7 +20,10 @@ async def api_migration_wrap(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        wrapped = CryptoWrapper.wrap(request.payload, mode=request.mode)
+        wrapped = CryptoWrapper.wrap(
+            request.payload,
+            mode=request.mode,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -28,7 +31,7 @@ async def api_migration_wrap(
 
     # Record migration event
     event = MigrationEvent(
-        message_id=str(request.payload.get("message_id", "msg-wrapped")),
+        message_id=str(request.payload.get("message_id", meta.get("nonce", "msg-wrapped"))),
         from_algorithm="MD5 (Legacy)",
         to_algorithm=meta["algorithm"],
         mode=request.mode,
@@ -41,7 +44,7 @@ async def api_migration_wrap(
         station_id=request.payload.get("station_id"),
         algorithm=meta["algorithm"],
         status="ENVELOPED",
-        details=f"Enveloped message with {meta['algorithm']} (mode={request.mode}, bytes={meta['canonical_bytes_len']})",
+        details=f"Enveloped message with {meta['algorithm']} (mode={request.mode}, nonce={meta.get('nonce')[:8]}...)",
     )
     db.add(audit)
     await db.commit()
@@ -59,16 +62,17 @@ async def api_migration_verify(
     request: MigrationVerifyRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    result = CryptoWrapper.verify(
+    result = await CryptoWrapper.verify_async(
         request.wrapped_message,
         enforce_mode=request.mode,
+        db_session=db,
     )
 
     status_str = "PASS" if result.get("verified") else "FAIL"
 
     # Log integrity check
     ic = IntegrityCheck(
-        message_id="migrated-check",
+        message_id=request.wrapped_message.get("crypto_metadata", {}).get("nonce", "migrated-check"),
         algorithm=result.get("algorithm", "UNKNOWN"),
         digest=result.get("provided_digest", "none"),
         verification_status=status_str,
@@ -77,7 +81,7 @@ async def api_migration_verify(
 
     audit = SecurityAuditLog(
         event_type="MIGRATION_VERIFICATION",
-        station_id=None,
+        station_id=request.wrapped_message.get("payload", {}).get("station_id") if isinstance(request.wrapped_message.get("payload"), dict) else None,
         algorithm=result.get("algorithm", "UNKNOWN"),
         status=status_str,
         details=f"Mode={request.mode}, Result={status_str}: {result.get('details')}",

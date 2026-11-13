@@ -1,4 +1,5 @@
 version: '3.8'
+
 services:
   backend:
     build: ./backend
@@ -6,7 +7,16 @@ services:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/evhashguard.db
+      - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+      - REPLAY_WINDOW_SECONDS=300
+      - DOWNGRADE_ALLOWED=false
+    volumes:
+      - ./backend:/app
+      - evhashguard_data:/app/data
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     ports:
@@ -14,4 +24,9 @@ services:
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://backend:8000
+      - VITE_API_URL=http://localhost:8000
+    restart: unless-stopped
+
+volumes:
+  evhashguard_data:
+    name: evhashguard_sqlite_volume

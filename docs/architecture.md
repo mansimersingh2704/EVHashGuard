@@ -113,3 +113,48 @@ The primary innovation is an **in-transit cryptographic wrapper** that envelopes
 ### Module H: Security Audit Dashboard
 - Real-time persisted SQLite telemetry.
 - Dynamic aggregation of messages, verification passes/failures, and attack blocks.
+
+---
+
+## 4. Security Hardening & Implementation Details (Audit Remediation)
+
+### 4.1 Authenticated Envelope Specification (v2.1.0-sha3)
+To prevent metadata substitution attacks, all security-critical envelope headers are bound into the authenticated cryptographic context:
+- `wrapper_version`: Explicit version string (`"v2.1.0-sha3"`) to prevent version confusion attacks.
+- `mode`: Enforced verification tier (`legacy_md5`, `sha3_256`, `hmac_sha3_256`).
+- `algorithm`: Canonical algorithm identifier (`MD5`, `SHA3-256`, `HMAC-SHA3-256`).
+- `key_id`: Cryptographic identifier of the key used (for HMAC modes).
+- `timestamp`: Authenticated ISO 8601 UTC creation timestamp.
+- `nonce`: Unique message identifier (UUIDv4) authenticated against replay.
+- `payload`: The intact OCPP 1.6-J payload object.
+
+### 4.2 RFC 8785 JSON Canonicalization Profile
+Cryptographic hashing requires unambiguous byte-stream serialization:
+- Keys are sorted lexicographically by UTF-16 code units.
+- Whitespace is strictly eliminated (no whitespace between keys, values, or separators).
+- Floating-point `NaN` and `Infinity` are rejected as invalid JSON.
+- Integer values and types are strictly preserved without coercion.
+
+### 4.3 Persistent Replay Protection Engine
+Unlike volatile in-memory sets, EVHashGuard implements persistent, ACID-compliant replay protection:
+- **Timestamp Freshness Window**: Configurable (default 300 seconds). Messages with timestamps outside `[now - window, now + 60s]` are rejected immediately.
+- **Persistent Nonce Deduplication**: Nonces are atomically checked and stored in the SQLite `consumed_nonces` table with an expiration timestamp (`expires_at`).
+- **Atomic Concurrency Protection**: Database-level unique constraint (`ix_consumed_nonces_nonce_unique`) guarantees that concurrent requests presenting the same nonce fail atomically.
+- **Persistence Across Restarts**: Stored nonces survive server crashes and restarts, preventing attacker exploitation of server reboots.
+
+### 4.4 Centralized Key Management & Key Rotation
+- Keys are identified via explicit `key_id` headers (e.g., `evhashguard-key-2026-v1`).
+- Verification attempts referencing unconfigured or unknown `key_id` values are immediately rejected with `UNKNOWN_KEY_IDENTIFIER`.
+- Keys can be loaded from environment variables (`EVHASHGUARD_HMAC_KEYS_JSON`) or configured dynamically.
+- Development instances utilize deterministic development keys rather than random ephemeral keys generated on every reboot.
+- Plaintext keys are strictly guarded and never exposed in REST API responses or database audit logs.
+
+### 4.5 Strict Protocol Parser & Two-Stage Verification
+EVHashGuard enforces a strict separation between cryptographic envelope verification and downstream OCPP protocol parsing:
+1. **Cryptographic Verification**: Validates the envelope integrity, digest/HMAC tag, timestamp freshness, and nonce.
+2. **Protocol Validation**: Strictly validates OCPP 1.6-J frame structure:
+   - Frame length exactness: CALL = 4 elements, CALLRESULT = 3 elements, CALLERROR = 5 elements.
+   - UniqueId must be a valid non-empty string (1–36 characters).
+   - CALL action must be a non-empty string and payload must be a JSON object dictionary.
+   - CALLERROR code and description must be strings and error details must be a dictionary.
+3. **Dispatch Gate**: A message is **only** dispatched to the CSMS business logic if **both** cryptographic and protocol validation succeed (`dispatched_to_legacy_parser = True`). A syntactically malformed OCPP frame with a valid hash is safely dropped.
